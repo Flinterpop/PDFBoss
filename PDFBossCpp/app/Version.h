@@ -11,7 +11,7 @@
 
 // A bare macro, above the RC_INVOKED guard, so the resource compiler can use
 // it too: rc.exe preprocesses this header but cannot parse the C++ below.
-#define PDFBOSS_VERSION_STRING "2.4.0"
+#define PDFBOSS_VERSION_STRING "2.4.1"
 
 #ifndef RC_INVOKED
 

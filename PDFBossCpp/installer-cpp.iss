@@ -16,7 +16,7 @@
 ; so the deprecated Python build can never produce either file by accident.
 
 #define AppName "PDFBoss"
-#define AppVersion "2.4.0"
+#define AppVersion "2.4.1"
 #define AppExe "PDFBoss.exe"
 #define BuildDir "build\app\Release"
 

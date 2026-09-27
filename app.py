@@ -71,7 +71,7 @@ except ImportError:  # pragma: no cover
 
 
 # Shown in the window title; keep in sync with AppVersion in installer.iss.
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 
 # Where the launch-time update check looks for new releases.
 UPDATE_API_URL = ("https://api.github.com/repos/"
