@@ -57,7 +57,13 @@ function CheckExit($what) {
 # here; cmdlets everywhere else still stop on error.
 function Native {
     $ErrorActionPreference = "Continue"   # function scope: restored on return
-    $exe, $rest = $args
+    # Not `$exe, $rest = $args`: with exactly one argument after the exe that
+    # makes $rest a plain STRING, and splatting a string passes it one
+    # CHARACTER at a time -- ISCC then saw every letter of the .iss path as a
+    # separate script and refused ("You may not specify more than one script
+    # filename").  @(...) keeps it an array whatever the count.
+    $exe = $args[0]
+    $rest = @($args | Select-Object -Skip 1)
     & $exe @rest
 }
 
