@@ -18,8 +18,8 @@
 // macro, so they are spelled out here.  release.ps1 rewrites them alongside
 // Version.h, and test_version.cpp asserts the pieces stay in step.
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     2,4,1,0
-PRODUCTVERSION  2,4,1,0
+FILEVERSION     2,5,0,0
+PRODUCTVERSION  2,5,0,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
