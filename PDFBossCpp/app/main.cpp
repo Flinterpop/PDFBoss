@@ -8,6 +8,7 @@
 #include "Config.h"
 #include "MainFrame.h"
 #include "PathUtf8.h"
+#include "TocGen.h"
 #include "Version.h"
 
 namespace fs = std::filesystem;
@@ -64,6 +65,10 @@ bool PdfBossApp::OnInit()
     // a drive that is no longer plugged in), then ./pdfs beside the exe.
     pdfboss::Config config;
     config.load();
+    // Author and organisation lines to keep out of generated topics: the
+    // person's own list, beside config.json, never compiled in.
+    pdfboss::set_author_noise(pdfboss::read_noise_words(
+        pdfboss::Config::path().parent_path() / pdfboss::kNoiseWordsFile));
 
     fs::path override_root;
     if (!folder_argument_.empty()) {

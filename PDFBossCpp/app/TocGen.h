@@ -48,6 +48,20 @@ TocResult generate_entries(PdfDocument& doc,
 // what was written.
 TocResult write_toc(const std::filesystem::path& pdf_path);
 
+// Words or phrases that mark a line in heading type as an author,
+// organisation or footer line rather than a topic (case-insensitive,
+// matched anywhere in the line).  None by default: they are particular to
+// whoever runs the app, so they live in a local file, never in this repo.
+// Call once at startup, before any topics are built on any thread.
+void set_author_noise(std::vector<std::string> words);
+
+// The noise words in `file`: one per line, trimmed, blank lines and lines
+// starting with '#' skipped.  Empty when the file is missing.  At most 200.
+std::vector<std::string> read_noise_words(const std::filesystem::path& file);
+
+// Where the apps keep that file: "toc-noise.txt" in their profile folder.
+inline constexpr char kNoiseWordsFile[] = "toc-noise.txt";
+
 }  // namespace pdfboss
 
 #endif  // PDFBOSS_APP_TOC_GEN_H

@@ -36,6 +36,8 @@ If a file of that name is already in the inbox you are asked whether to replace 
 
 Every PDF can have a companion topics file with the same base name — for example `manual.pdf` pairs with `manual.toc`. If a PDF has none, it shows as `(no metadata)`. Press **Refresh** (or `F5`) and choose to build topic lists: PDFBoss reads each PDF's built-in outline bookmarks (not your own `Ctrl+B` bookmarks), or falls back to detecting headings from the text when there are none.
 
+When topics come from detected headings, lines set in heading type that are really an author's name, an organisation or a recurring footer can be kept out. List them in a plain text file named `toc-noise.txt` in the settings folder, beside `config.json`. Put one word or phrase per line; a line containing any of them, in any case, is never made a topic. Lines starting with `#` are ignored. The file is yours and stays on your machine: PDFBoss has no such list of its own.
+
 Building a topic list means reading text from **every page**, so a batch of large documents takes a while. A progress dialog shows which file is being read and how far through the batch it is, and **Cancel** stops after the file in progress — the lists already built are kept, and pressing **Refresh** again picks up where it left off, since only PDFs still without a topics file are offered.
 
 A `.toc` is a plain text file you can edit by hand — the page is the trailing number, so topics may contain colons and dashes:

@@ -31,8 +31,10 @@ MONTH_DATE = re.compile(
     r"(January|February|March|April|May|June|July|August|September|"
     r"October|November|December)\s+\d{1,2},\s+\d{4}")
 # Recurring author / organisation / page-footer lines to drop from headings.
-AUTHOR_ORG = re.compile(
-    r"Graham|DAEPM|R&CS4-5|JTDLM|GLDTI|Joint Tactical Data Link", re.IGNORECASE)
+# The names that used to be here were the author's own, in a public repo, and
+# were removed; this frozen reference now matches nothing.  The C++ app reads
+# its list from a local toc-noise.txt instead (TocGen.h).
+AUTHOR_ORG = re.compile(r"(?!)")
 
 
 def _clean(text: str) -> str:

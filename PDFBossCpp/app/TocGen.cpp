@@ -358,16 +358,21 @@ bool has_month_date(const std::string& text)
     return false;
 }
 
-// AUTHOR_ORG: recurring author / organisation / footer lines to drop.
-// Ported verbatim from tocgen.py; do not extend it here without the same
-// change on the Python side, or the two apps generate different .toc files.
+// The words set_author_noise() was given.  Empty unless the app loaded some.
+std::vector<std::string>& author_noise()
+{
+    static std::vector<std::string> words;
+    return words;
+}
+
+// AUTHOR_ORG: recurring author / organisation / footer lines to drop.  The
+// words used to be compiled in, and were the author's own name and
+// organisation -- in a public repo.  They are now whatever the person
+// running the app lists locally (set_author_noise), and none by default.
 bool is_author_org(const std::string& text)
 {
-    static const char* const kNeedles[] = {
-        "Graham", "DAEPM", "R&CS4-5", "JTDLM", "GLDTI",
-        "Joint Tactical Data Link"};
-    for (const char* needle : kNeedles) {
-        if (contains_ci(text, needle)) {
+    for (const std::string& needle : author_noise()) {   // bounded by the list
+        if (!needle.empty() && contains_ci(text, needle)) {
             return true;
         }
     }
@@ -699,6 +704,32 @@ TocResult write_toc(const fs::path& pdf_path)
         result.error = "could not write " + path_to_utf8(out_path.filename());
     }
     return result;
+}
+
+void set_author_noise(std::vector<std::string> words)
+{
+    author_noise() = std::move(words);
+}
+
+std::vector<std::string> read_noise_words(const fs::path& file)
+{
+    constexpr std::size_t kMaxWords = 200;
+    std::vector<std::string> words;
+    std::ifstream in(file);
+    std::string line;
+    while (words.size() < kMaxWords && std::getline(in, line)) {   // bounded
+        // Notepad starts a UTF-8 file with a byte-order mark.
+        if (line.compare(0, 3, "\xEF\xBB\xBF") == 0) {
+            line.erase(0, 3);
+        }
+        const std::size_t first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == '#') {
+            continue;
+        }
+        const std::size_t last = line.find_last_not_of(" \t\r");
+        words.push_back(line.substr(first, last - first + 1));
+    }
+    return words;
 }
 
 }  // namespace pdfboss

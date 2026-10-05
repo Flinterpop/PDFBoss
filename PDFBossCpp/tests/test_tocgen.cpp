@@ -38,7 +38,14 @@ TocResult generate(const std::string& name)
     static PdfDocument doc;  // reused; open() closes any previous document
     const fs::path path = fixture_dir() / name;
     REQUIRE(doc.open(path));
-    return generate_entries(doc, path);
+    // The fixtures carry an author line, "B Graham", and the golden values
+    // come from the Python oracle, which had that name compiled into its
+    // noise list.  The C++ side has no compiled-in list any more, so the
+    // tests supply the word the way a person's local toc-noise.txt would.
+    set_author_noise({"Graham"});
+    TocResult result = generate_entries(doc, path);
+    set_author_noise({});
+    return result;
 }
 
 }  // namespace
@@ -112,6 +119,8 @@ TEST_CASE("a heading with its own number is not rejoined", "[tocgen][parity]")
 
 TEST_CASE("noise lines are filtered out of headings", "[tocgen][parity]")
 {
+    // The author line is dropped by the word generate() supplies, as a
+    // person's local list would; nothing of the kind is compiled in.
     const TocResult result = generate("fixture_headings.pdf");
     REQUIRE(result.ok);
 
@@ -190,4 +199,38 @@ TEST_CASE("write_toc produces the same file the Python app writes", "[tocgen]")
 
     fs::remove(work, ec);
     fs::remove(expected_toc, ec);
+}
+
+TEST_CASE("no author or organisation is compiled in", "[tocgen]")
+{
+    // With no local list, the fixture's author line is just another line in
+    // heading type: the filter knows no names of its own.
+    PdfDocument doc;
+    const fs::path path = fixture_dir() / "fixture_headings.pdf";
+    REQUIRE(doc.open(path));
+    set_author_noise({});
+    const TocResult result = generate_entries(doc, path);
+    bool author_kept = false;
+    for (const TopicEntry& entry : result.entries) {
+        author_kept = author_kept || entry.topic == "B Graham";
+    }
+    CHECK(author_kept);
+}
+
+TEST_CASE("noise words are read from a local file", "[tocgen]")
+{
+    const fs::path file =
+        fs::temp_directory_path() / "pdfboss_noise_words.txt";
+    {
+        std::ofstream out(file, std::ios::binary);
+        out << "\xEF\xBB\xBF# lines to keep out of topics\r\n"
+               "  First Name  \r\n"
+               "\r\n"
+               "Some Organisation\n";
+    }
+    CHECK(read_noise_words(file) ==
+          std::vector<std::string>{"First Name", "Some Organisation"});
+    std::error_code ec;
+    fs::remove(file, ec);
+    CHECK(read_noise_words(file).empty());
 }
