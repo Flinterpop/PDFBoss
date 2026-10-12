@@ -10,6 +10,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <shellapi.h>  // ShellExecuteExW; WIN32_LEAN_AND_MEAN leaves it out
 
 #include "PathUtf8.h"
 
@@ -17,6 +18,9 @@ namespace pdfboss {
 namespace {
 
 namespace fs = std::filesystem;
+
+static_assert(kLaunchCancelled == ERROR_CANCELLED,
+              "kLaunchCancelled must be the error a declined UAC prompt gives");
 
 std::string environment(const char* name)
 {
@@ -52,7 +56,13 @@ bool under_root(const fs::path& candidate, const std::string& root)
     return a.rfind(b, 0) == 0;
 }
 
-// The batch preamble that waits for this process to exit.
+// How long a handoff batch waits, in polls of about a second each.  The app
+// closes within seconds.  The installer waits up to a minute for the app,
+// then installs and may remove a per-user copy, so it gets a larger bound.
+constexpr int kAppExitPolls = 60;
+constexpr int kInstallerExitPolls = 300;
+
+// The batch preamble that waits for process `pid` to exit.
 //
 // Every detail here is load-bearing and was learned the hard way in MDBoss:
 //   - `timeout` cannot provide the delay: with no console it exits at once
@@ -64,9 +74,10 @@ bool under_root(const fs::path& candidate, const std::string& root)
 //     the installer races the still-running app.
 //   - It waits on the PID, not the image name, or a second build of the same
 //     app sitting open makes the loop burn its full timeout.
-std::string wait_for_exit_header(unsigned long pid)
+std::string wait_for_exit_header(unsigned long pid, int max_polls)
 {
     assert(pid != 0 && "a pid of 0 would match nothing and never wait");
+    assert(max_polls > 0 && "the wait loop needs a bound");
     const std::string sys32 = "%SystemRoot%\\System32";
     const std::string pid_text = std::to_string(pid);
 
@@ -80,7 +91,7 @@ std::string wait_for_exit_header(unsigned long pid)
              "\" >nul\r\n";
     batch += "if errorlevel 1 goto psgo\r\n";
     batch += "set /a _n+=1\r\n";
-    batch += "if %_n% GEQ 60 goto psgo\r\n";
+    batch += "if %_n% GEQ " + std::to_string(max_polls) + " goto psgo\r\n";
     batch += "\"" + sys32 + "\\PING.EXE\" -n 2 127.0.0.1 >nul\r\n";
     batch += "goto pswait\r\n";
     batch += ":psgo\r\n";
@@ -156,7 +167,7 @@ bool running_portable(const fs::path& app_exe)
     return true;
 }
 
-std::string install_scope_flag(const fs::path& app_exe)
+bool installed_machine_wide(const fs::path& app_exe)
 {
     assert(!app_exe.empty() && "no exe path to classify");
     // ProgramW6432 covers a 32-bit process on 64-bit Windows; the (x86) root
@@ -165,25 +176,94 @@ std::string install_scope_flag(const fs::path& app_exe)
                                  "ProgramFiles(x86)"};
     for (const char* const name : roots) {
         if (under_root(app_exe, environment(name))) {
-            return "/ALLUSERS";
+            return true;
         }
     }
-    return "/CURRENTUSER";
+    return false;
+}
+
+std::string installer_arguments(unsigned long app_pid)
+{
+    assert(app_pid != 0 && "the installer must have a process to wait for");
+    // /ALLUSERS states the scope even though the installer allows no other,
+    // so a script that ever regains a per-user choice cannot silently take it.
+    std::string arguments =
+        "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /WAITPID=" +
+        std::to_string(app_pid);
+    assert(arguments.find("/CURRENTUSER") == std::string::npos);
+    return arguments;
+}
+
+InstallerLaunch launch_installer_elevated(const fs::path& setup_path,
+                                          const std::string& arguments,
+                                          void* owner)
+{
+    assert(!setup_path.empty() && "nothing to launch");
+    assert(!arguments.empty() && "a silent install needs its switches");
+
+    // The arguments are plain ASCII switches and digits (installer_arguments).
+    std::wstring wide_arguments;
+    for (const char c : arguments) {
+        assert(static_cast<unsigned char>(c) < 0x80 && "arguments are ASCII");
+        wide_arguments.push_back(static_cast<wchar_t>(c));
+    }
+    const std::wstring file = setup_path.wstring();
+
+    SHELLEXECUTEINFOW info = {};
+    info.cbSize = sizeof(info);
+    // NOASYNC: the call returns only once the launch has finished (UAC
+    // answered).  FLAG_NO_UI: the caller reports a failure in its own words.
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    info.hwnd = static_cast<HWND>(owner);
+    info.lpVerb = L"runas";
+    info.lpFile = file.c_str();
+    info.lpParameters = wide_arguments.c_str();
+    info.nShow = SW_SHOWNORMAL;
+
+    InstallerLaunch result;
+    if (::ShellExecuteExW(&info) == FALSE) {
+        result.error = ::GetLastError();
+        return result;
+    }
+    if (info.hProcess == nullptr) {
+        // Started, but with no handle to wait on.  The installer waits a
+        // minute for this app and then gives up, so reporting failure and
+        // staying open is still safe.
+        result.error = ERROR_INVALID_HANDLE;
+        return result;
+    }
+    result.pid = ::GetProcessId(info.hProcess);
+    if (result.pid == 0) {
+        result.error = ::GetLastError();
+    }
+    ::CloseHandle(info.hProcess);
+    return result;
 }
 
 std::string installer_batch(const fs::path& setup_path, const fs::path& app_exe,
-                            unsigned long pid)
+                            unsigned long installer_pid)
 {
-    assert(!setup_path.empty() && "nothing to install");
+    assert(!setup_path.empty() && "nothing to clean up");
     assert(!app_exe.empty() && "nothing to relaunch");
 
     const std::string setup = path_to_utf8(setup_path);
     const std::string exe = path_to_utf8(app_exe);
+    const std::string machine = kMachineInstallExe;
 
-    std::string batch = wait_for_exit_header(pid);
-    batch += "\"" + setup + "\" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES " +
-             install_scope_flag(app_exe) + "\r\n";
+    // The installer itself is already running, elevated; this batch only
+    // waits for it and relaunches unelevated.  goto, not a parenthesised if
+    // block: a path such as "Program Files (x86)" would close the block.
+    std::string batch = wait_for_exit_header(installer_pid, kInstallerExitPolls);
+    if (!installed_machine_wide(app_exe)) {
+        // A per-user or stray copy: the update installed to Program Files and
+        // removed the per-user copy, so start the machine one if it is there.
+        batch += "if not exist \"" + machine + "\" goto psown\r\n";
+        batch += "start \"\" \"" + machine + "\"\r\n";
+        batch += "goto psclean\r\n";
+    }
+    batch += ":psown\r\n";
     batch += "start \"\" \"" + exe + "\"\r\n";
+    batch += ":psclean\r\n";
     batch += "del /q \"" + setup + "\"\r\n";
     batch += "del /q \"%~f0\"\r\n";
     return batch;
@@ -207,7 +287,7 @@ std::string portable_batch(const fs::path& zip_path, const fs::path& staging_dir
     // nothing, and the relaunch line runs either way: a failed update is a
     // no-op, not a brick.  robocopy copies OVER the install rather than
     // replacing it, for the same reason _swap_portable_and_exit does.
-    std::string batch = wait_for_exit_header(pid);
+    std::string batch = wait_for_exit_header(pid, kAppExitPolls);
     batch += "md \"" + staging + "\" 2>nul\r\n";
     batch += "\"" + sys32 + "\\tar.exe\" -xf \"" + zip + "\" -C \"" + staging +
              "\"\r\n";

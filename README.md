@@ -46,9 +46,12 @@ Use the **Folders…** button to manage up to five top-level folders. Each appea
 Grab either flavor from the
 [latest release](https://github.com/Flinterpop/PDFBoss/releases/latest):
 
-- **`PDFBoss-Setup.exe`** — a per-user installer (no admin rights needed):
-  it installs the app, adds Start-Menu (and optional desktop) shortcuts, and
-  registers an uninstaller.
+- **`PDFBoss-Setup.exe`** — a machine-wide installer (asks for administrator
+  approval): it installs the app into `Program Files\PDFBoss` for all users,
+  adds Start-Menu (and optional desktop) shortcuts, and registers an
+  uninstaller. There is no per-user install. Releases up to v2.5.0 installed
+  per-user, in `%LOCALAPPDATA%\Programs`; that copy is removed when the new
+  one is installed — after asking, or automatically during an update.
 - **`PDFBoss-Portable.zip`** — no install at all: unzip `PDFBoss.exe`
   anywhere (a folder, a USB stick) and run it. Settings still live in
   `%APPDATA%\PDFGuide\config.json`.
@@ -57,7 +60,8 @@ Point the app at your own PDF folders with **Folders…** after installing.
 
 The app **checks for updates at launch** (quietly, in the background) and
 offers to download and apply a newer release in place — the installed copy
-re-runs the installer silently, the portable copy swaps its own exe — or to
+re-runs the installer silently (after a UAC prompt; decline it and nothing
+changes), the portable copy swaps its own exe — or to
 skip that version (`"skip_version"` in the config file). A manual **Check for
 updates** button lives at the bottom of the Help window. To disable the launch
 check, add `"check_updates": false` to `%APPDATA%\PDFGuide\config.json`.

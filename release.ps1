@@ -237,17 +237,19 @@ CheckExit "gh release create"
 # --- Local reinstall ---------------------------------------------------------
 if (-not $SkipInstall) {
     Write-Host "==> Reinstalling locally and relaunching" -ForegroundColor Cyan
-    # The installer now defaults to per-machine and asks, so a silent re-run
-    # needs an explicit scope or it may land somewhere other than the existing
-    # install.  /CURRENTUSER matches the historical per-user location.
+    # The installer is machine-level only (Program Files, one UAC prompt);
+    # /ALLUSERS states it.  On a machine that still has the old per-user
+    # install, this run migrates it: removes the per-user copy and starts the
+    # new one itself -- so start it here only if it is not already running.
     Start-Process (Join-Path $PSScriptRoot "installer\PDFBoss-Setup.exe") `
-        -ArgumentList "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES", "/CURRENTUSER" -Wait
+        -ArgumentList "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES", "/ALLUSERS" -Wait
     # An install from before the rename keeps its "PDF Sherpa" folder (the
     # installer reuses the previous directory), so look in both.
-    $installed = @("$env:LOCALAPPDATA\Programs\PDFBoss\PDFBoss.exe",
-                   "$env:LOCALAPPDATA\Programs\PDF Sherpa\PDFBoss.exe") |
+    $installed = @("$env:ProgramFiles\PDFBoss\PDFBoss.exe",
+                   "$env:ProgramFiles\PDF Sherpa\PDFBoss.exe") |
         Where-Object { Test-Path $_ } | Select-Object -First 1
-    if ($installed) { Start-Process $installed }
+    $running = Get-Process -Name "PDFBoss" -ErrorAction SilentlyContinue
+    if ($installed -and -not $running) { Start-Process $installed }
 }
 
 Write-Host "==> Done: https://github.com/Flinterpop/PDFBoss/releases/tag/v$Version" -ForegroundColor Green

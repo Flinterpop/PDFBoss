@@ -287,22 +287,62 @@ void UpdateCheck::install_and_exit(const fs::path& downloaded)
     }
 
     const unsigned long pid = static_cast<unsigned long>(::wxGetProcessId());
-    const std::string batch =
-        portable_ ? portable_batch(staged, temp / "PDFBoss-update", exe, pid)
-                  : installer_batch(staged, exe, pid);
+    std::string batch;
+    if (portable_) {
+        batch = portable_batch(staged, temp / "PDFBoss-update", exe, pid);
+    } else if (!start_installer(staged, exe, pid, batch)) {
+        fs::remove(staged, ec);
+        return;  // the installer did not start: stay open, nothing changed
+    }
+    assert(!batch.empty());
 
     const fs::path batch_path = temp / "PDFBoss-update.bat";
     if (!spawn_handoff_batch(batch, batch_path)) {
-        wxMessageBox(L"Could not start the updater.", L"Update",
-                     wxOK | wxICON_ERROR, parent_);
-        return;
+        if (portable_) {
+            wxMessageBox(L"Could not start the updater.", L"Update",
+                         wxOK | wxICON_ERROR, parent_);
+            return;
+        }
+        // The installer is already running and waiting for this process to
+        // exit, so close regardless; only the automatic relaunch is lost.
+        wxMessageBox(L"The update is being installed, but PDFBoss could not "
+                     L"arrange to reopen afterwards.  Start it again from the "
+                     L"Start menu once the install has finished.",
+                     L"Update", wxOK | wxICON_WARNING, parent_);
     }
 
-    // The batch waits for this process to exit before touching the exe, so
-    // closing is the handoff.
+    // Portable: the batch waits for this process to exit before touching the
+    // exe.  Installed: the installer does.  Either way closing is the handoff.
     if (parent_ != nullptr) {
         parent_->Close(true);
     }
+}
+
+bool UpdateCheck::start_installer(const fs::path& setup, const fs::path& exe,
+                                  unsigned long app_pid, std::string& batch)
+{
+    assert(!setup.empty());
+    assert(app_pid != 0);
+
+    // Started now, elevated, while this app is still open: the UAC prompt is
+    // answered before anything closes, so "No" costs nothing.  The installer
+    // waits for this process (/WAITPID) before it touches a file.
+    void* const owner = (parent_ != nullptr) ? parent_->GetHWND() : nullptr;
+    const InstallerLaunch launch =
+        launch_installer_elevated(setup, installer_arguments(app_pid), owner);
+    if (launch.pid == 0) {
+        const wxString why =
+            (launch.error == kLaunchCancelled)
+                ? wxString(L"The update needs administrator approval, which "
+                           L"was not given.")
+                : wxString::Format(L"The installer could not be started "
+                                   L"(error %lu).", launch.error);
+        wxMessageBox(why + L"\n\nPDFBoss has not been changed.", L"Update",
+                     wxOK | wxICON_INFORMATION, parent_);
+        return false;
+    }
+    batch = installer_batch(setup, exe, launch.pid);
+    return true;
 }
 
 }  // namespace pdfboss

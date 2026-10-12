@@ -44,6 +44,11 @@ private:
     void begin_download(const ReleaseInfo& info, const std::string& url,
                         bool portable);
     void install_and_exit(const std::filesystem::path& downloaded);
+    // Start the installer elevated; on success fill `batch` with the relaunch
+    // handoff.  False (after telling the user) when it did not start.
+    bool start_installer(const std::filesystem::path& setup,
+                         const std::filesystem::path& exe,
+                         unsigned long app_pid, std::string& batch);
 
     wxWindow* parent_ = nullptr;
     Config* config_ = nullptr;

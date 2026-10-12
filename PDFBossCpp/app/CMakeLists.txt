@@ -18,7 +18,7 @@ add_library(pdfboss_core STATIC
     TocGen.cpp
     TocGen.h
     # The updater's logic lives here, not in the GUI target, so the version
-    # comparison, the install-scope decision and the handoff batch text can be
+    # comparison, the installer's arguments and the handoff batch text can be
     # unit-tested without starting wxWidgets.  Nothing in it includes wx.
     Updater.cpp
     Updater.h
@@ -35,6 +35,9 @@ target_link_libraries(pdfboss_core
         # the dependency private is what enforces that at build time rather
         # than by convention.  See the comment at the top of PdfDocument.h.
         mupdf
+        # ShellExecuteExW, which the updater uses to start the installer
+        # elevated.
+        shell32
 )
 
 # -- The application ---------------------------------------------------------

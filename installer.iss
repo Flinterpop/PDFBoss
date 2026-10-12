@@ -31,8 +31,10 @@ OutputDir=installer
 OutputBaseFilename=PDFSherpa-Setup
 Compression=lzma2
 SolidCompression=yes
-; Per-user install so no admin rights are needed.
-PrivilegesRequired=lowest
+; Machine-level only (house rule, 11 Oct 2026), matching installer-cpp.iss:
+; no per-user install, so no PrivilegesRequiredOverridesAllowed.  This script
+; is never built for release; the change is for consistency only.
+PrivilegesRequired=admin
 WizardStyle=modern
 
 [Files]

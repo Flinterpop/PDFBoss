@@ -54,34 +54,25 @@ ArchitecturesAllowed=x64compatible
 ; see the terms before installing.
 LicenseFile=..\LICENSE
 
-; Per-user, no elevation -- deliberately NOT the workspace default of
-; per-machine-with-a-dialog, and this must not be "corrected" in this release.
+; Machine-level only, into Program Files (house rule, 11 Oct 2026): no
+; per-user choice, so there is deliberately NO PrivilegesRequiredOverridesAllowed
+; line, and /ALLUSERS or /CURRENTUSER on the command line changes nothing.
+; Under admin, {autopf} resolves to {commonpf}.
 ;
-; The v2.0.0 release is a MIGRATION release: it is applied by the updater
-; built into the deprecated Python app, which every existing install is still
-; running.  That updater invokes the installer as
+; Every install before this one was PER-USER (PrivilegesRequired=lowest, in
+; %LOCALAPPDATA%\Programs\PDF Sherpa or ...\PDFBoss), so the first update
+; onto this installer is a MIGRATION.  The per-user copy is registered under
+; HKCU with the same AppId; after a successful install RemovePerUserCopy (in
+; [Code]) runs that copy's own uninstaller -- asking first when the wizard is
+; shown, automatically when silent, since an update is the operator's yes --
+; so nobody is left with two copies, the old one still polling for updates.
 ;
-;     "<setup>" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
-;
-; with no install-scope flag, because install_scope_flag did not exist when it
-; shipped.  Against PrivilegesRequired=admin that silent run either fails to
-; elevate, or elevates and installs to {commonpf}\PDF Sherpa while the
-; existing copy stays in {userpf}\PDF Sherpa -- a second copy, with the old
-; one still polling for updates.  Either way the migration breaks, for every
-; existing user, silently.
-;
-; {autopf} under PrivilegesRequired=lowest resolves to {userpf}
-; (%LOCALAPPDATA%\Programs), which is exactly where the Python installer put
-; it, so the update lands on top of the existing install as intended.
-;
-; WHEN TO CHANGE THIS: once a release has shipped that everyone is running the
-; C++ updater from, this can become PrivilegesRequired=admin plus
-; PrivilegesRequiredOverridesAllowed=dialog.  That updater passes
-; /ALLUSERS or /CURRENTUSER matching where the running exe actually lives --
-; see install_scope_flag in PDFBossCpp\app\Updater.cpp, which exists for
-; this and is tested for it.  Do not make that change in the same release
-; that migrates people onto it.
-PrivilegesRequired=lowest
+; Old updaters (v2.5.0 and earlier, and every pre-rename PDF Sherpa) run this
+; silently and then relaunch the per-user exe by path, which the migration has
+; just removed.  So when a silent run migrated and no /WAITPID was given (the
+; new updater passes one and relaunches for itself), the [Run] entry below
+; starts the new copy instead, as the original, unelevated user.
+PrivilegesRequired=admin
 
 [Files]
 Source: "{#BuildDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
@@ -118,9 +109,142 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; \
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; \
     Flags: nowait postinstall skipifsilent
+; An old updater's relaunch line names the per-user exe the migration removed;
+; start the new copy for it.  runasoriginaluser: never hand the user an
+; elevated app (drag and drop from Explorer is blocked into one).
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; \
+    Check: RelaunchForOldUpdater
 
 [Code]
+const
+  SYNCHRONIZE = $00100000;
+  WAIT_OBJECT_0 = 0;
+  // The updater has closed within a second or two in practice; past this it
+  // is not closing, and installing over a running exe is worse than not.
+  UpdaterExitTimeoutMs = 60000;
+  // A per-user install of the same AppId, made by every installer before
+  // this one.  Inno appends "_is1" to the AppId for its uninstall key.
+  PerUserUninstallKey =
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppIdValue}_is1';
+  PerUserRemovalPolls = 40;  // x 250 ms: the uninstaller's second phase
+
+var
+  MigratedPerUser: Boolean;
+
+function OpenProcess(DesiredAccess: Cardinal; InheritHandle: Integer;
+  ProcessId: Cardinal): THandle;
+  external 'OpenProcess@kernel32.dll stdcall';
+function WaitForSingleObject(Handle: THandle; Milliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function CloseHandle(Handle: THandle): Integer;
+  external 'CloseHandle@kernel32.dll stdcall';
+
 function OldExePresent: Boolean;
 begin
   Result := FileExists(ExpandConstant('{app}\{#OldAppExe}'));
+end;
+
+// The updater built into PDFBoss starts this installer elevated while the app
+// is still open -- so a declined UAC prompt leaves the app running rather than
+// closed -- and passes its own process id as /WAITPID=<pid>.  Wait for that
+// process to exit before any file is touched; give up (and install nothing)
+// if it does not.
+function WaitForUpdaterExit(): Boolean;
+var
+  Pid: Cardinal;
+  Process: THandle;
+begin
+  Result := True;
+  Pid := StrToIntDef(ExpandConstant('{param:WAITPID|0}'), 0);
+  if Pid = 0 then
+    Exit;
+  Process := OpenProcess(SYNCHRONIZE, 0, Pid);
+  if Process = 0 then
+    Exit;  // already gone
+  Result := WaitForSingleObject(Process, UpdaterExitTimeoutMs) = WAIT_OBJECT_0;
+  CloseHandle(Process);
+  if not Result then
+    Log('The updating PDFBoss (pid ' + IntToStr(Pid) + ') did not exit; not installing.');
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  MigratedPerUser := False;
+  Result := WaitForUpdaterExit();
+end;
+
+// A machine install must never land in a user's profile, whatever directory
+// Inno would otherwise reuse from a previous install.
+procedure InitializeWizard();
+var
+  Profile: String;
+begin
+  Profile := Lowercase(AddBackslash(GetEnv('USERPROFILE')));
+  if (Length(Profile) > 1) and
+     (Pos(Profile, Lowercase(AddBackslash(WizardForm.DirEdit.Text))) = 1) then
+    WizardForm.DirEdit.Text := ExpandConstant('{autopf}\{#AppName}');
+end;
+
+// The per-user copy's uninstaller, or '' when there is none.
+function PerUserUninstaller(var Dir: String): String;
+var
+  Value: String;
+begin
+  Result := '';
+  Dir := '';
+  if not RegQueryStringValue(HKCU, PerUserUninstallKey, 'UninstallString', Value) then
+    Exit;
+  Value := RemoveQuotes(Value);
+  if not FileExists(Value) then
+    Exit;
+  if not RegQueryStringValue(HKCU, PerUserUninstallKey, 'InstallLocation', Dir) then
+    Dir := ExtractFilePath(Value);
+  Result := Value;
+end;
+
+procedure RemovePerUserCopy();
+var
+  Uninstaller, Dir: String;
+  Code, I: Integer;
+begin
+  Uninstaller := PerUserUninstaller(Dir);
+  if Uninstaller = '' then
+    Exit;
+  if SuppressibleMsgBox('An older per-user copy of {#AppName} is installed in' + #13#10 +
+       Dir + #13#10 + #13#10 +
+       '{#AppName} is now installed for all users in' + #13#10 +
+       ExpandConstant('{app}') + #13#10 + #13#10 +
+       'Remove the per-user copy? (Recommended: it would keep its own ' +
+       'shortcuts and keep offering updates.)',
+       mbConfirmation, MB_YESNO, IDYES) <> IDYES then begin
+    Log('Per-user copy kept at the operator''s request: ' + Dir);
+    Exit;
+  end;
+  if not Exec(Uninstaller, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '',
+              SW_HIDE, ewWaitUntilTerminated, Code) then
+    Log('Could not start the per-user uninstaller: ' + SysErrorMessage(Code))
+  else
+    for I := 1 to PerUserRemovalPolls do begin
+      if not RegKeyExists(HKCU, PerUserUninstallKey) then
+        Break;
+      Sleep(250);
+    end;
+  MigratedPerUser := not RegKeyExists(HKCU, PerUserUninstallKey);
+  if not MigratedPerUser then
+    SuppressibleMsgBox('The per-user copy in' + #13#10 + Dir + #13#10 +
+       'could not be removed.  Uninstall it from Apps & Features.',
+       mbError, MB_OK, IDOK);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  // After the new copy is in place, so a failed install keeps the old one.
+  if CurStep = ssPostInstall then
+    RemovePerUserCopy();
+end;
+
+function RelaunchForOldUpdater(): Boolean;
+begin
+  Result := WizardSilent() and MigratedPerUser and
+            (ExpandConstant('{param:WAITPID|0}') = '0');
 end;

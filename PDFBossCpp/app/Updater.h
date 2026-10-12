@@ -53,15 +53,48 @@ bool is_newer(const std::vector<int>& candidate, const std::vector<int>& current
 // headless core and be unit-tested without starting a GUI.
 bool running_portable(const std::filesystem::path& app_exe);
 
-// "/ALLUSERS" or "/CURRENTUSER", matching where the running exe actually
-// lives.  A silent installer re-run without this takes the per-machine default
-// and plants a SECOND copy alongside the per-user one.
-std::string install_scope_flag(const std::filesystem::path& app_exe);
+// Where the installer puts the app, as a path cmd.exe expands.  Installs are
+// machine-level only (house rule, 11 Oct 2026), so an install that was
+// per-user before the update is here afterwards.
+inline constexpr const char* kMachineInstallExe =
+    "%ProgramFiles%\\PDFBoss\\PDFBoss.exe";
 
-// The batch that waits for this process to exit, then installs and relaunches.
+// True when `app_exe` lives under Program Files -- a machine install, which an
+// update replaces in place.
+bool installed_machine_wide(const std::filesystem::path& app_exe);
+
+// The installer's command line.  Always /ALLUSERS, never /CURRENTUSER: the
+// installer is machine-level only.  /WAITPID=<pid> makes it wait for the
+// updating app (process `app_pid`) to exit before it touches a file.
+std::string installer_arguments(unsigned long app_pid);
+
+// ERROR_CANCELLED, spelled out so callers need no <windows.h>: the error
+// ShellExecuteEx reports when the UAC prompt was declined.
+inline constexpr unsigned long kLaunchCancelled = 1223;
+
+// The outcome of starting the installer: its process id, or 0 and the
+// Windows error (kLaunchCancelled when the UAC prompt was declined).
+struct InstallerLaunch {
+    unsigned long pid = 0;
+    unsigned long error = 0;
+};
+
+// Start the installer ELEVATED (ShellExecuteEx "runas") while the app is still
+// running, so a declined prompt leaves the app open instead of closed with
+// nothing installed.  CreateProcess cannot do this: it fails with
+// ERROR_ELEVATION_REQUIRED on anything that asks for admin.  `owner` is the
+// window the UAC prompt belongs to, as an HWND; it may be null.
+InstallerLaunch launch_installer_elevated(const std::filesystem::path& setup_path,
+                                          const std::string& arguments,
+                                          void* owner);
+
+// The batch that waits for the installer (process `installer_pid`) to finish,
+// then relaunches the app UNELEVATED -- the installer runs elevated, and an app
+// it started would be too.  An update that migrated a per-user install
+// relaunches the machine copy, since the per-user exe is gone.
 std::string installer_batch(const std::filesystem::path& setup_path,
                             const std::filesystem::path& app_exe,
-                            unsigned long pid);
+                            unsigned long installer_pid);
 
 // The batch that waits, unpacks the portable zip, and copies it over the
 // install only if it really contains PDFBoss.exe.

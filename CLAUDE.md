@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-*Last updated: 25 Sep 2026*
+*Last updated: 11 Oct 2026*
 
 Guidance for Claude Code working in this repository.
 
@@ -28,10 +28,20 @@ Practical consequences:
 The app, exe, installer, source tree (`PDFSherpaCpp/` → `PDFBossCpp/`), namespace and GitHub repo (`Flinterpop/PDF_Sherpa` → `Flinterpop/PDFBoss`) were all renamed in one go. Every copy of v2.3.0 and earlier still out there polls `…/PDF_Sherpa/releases/latest` (GitHub redirects it) for **`PDFSherpa-Setup.exe`** / **`PDFSherpa-Portable.zip`**, so three things keep them updating:
 
 - **`release.ps1` attaches both old asset names to every release**: the same installer copied, and a zip whose exe is named `PDFSherpa.exe` (the old portable updater copies nothing without that exact name). Drop it only when no pre-rename copy can still be running.
-- **`installer-cpp.iss` pins `AppId` to `PDF Sherpa`.** Inno took the id from `AppName` before, so this keeps the new installer the same product: it upgrades in place, in the old `PDF Sherpa` folder. Never change it.
+- **`installer-cpp.iss` pins `AppId` to `PDF Sherpa`.** Inno took the id from `AppName` before, so this keeps the new installer the same product: it upgrades in place, in the old `PDF Sherpa` folder, and it is how the machine-level installer finds the per-user copy it replaces (below). Never change it.
 - **Where `{app}\PDFSherpa.exe` already exists, the installer refreshes it as a copy of the new build** instead of deleting it. The old updater's handoff batch relaunches that path after the silent install, and taskbar pins point at it; deleting it means the app closes and never comes back.
 
 `%APPDATA%\PDFGuide` is unaffected: it outlived the previous rename too. The words "Introduction to the Sherpa" in the test fixtures are baked into the committed PDFs and golden values; they are fixture text, not the app's name. The deprecated `app.py`, `tocgen.py`, `installer.iss`, `PDFSherpa.spec` and the session log `4July2026.txt` keep the old name as frozen history — only their icon paths moved.
+
+## Installs are machine-level only (changed 11 Oct 2026, after v2.5.0)
+
+House rule for every project: `installer-cpp.iss` is `PrivilegesRequired=admin` with **no** `PrivilegesRequiredOverridesAllowed` line, into `{autopf}\PDFBoss` = Program Files. Every release up to v2.5.0 was the opposite, per-user only (`PrivilegesRequired=lowest`, `%LOCALAPPDATA%\Programs\PDF Sherpa` or `…\PDFBoss`), so **the first release built from this is a migration**, and three pieces carry it:
+
+- **The installer removes the per-user copy.** It finds it by the same AppId's uninstall key under HKCU (`PDF Sherpa_is1`) and, after its own install succeeds (`ssPostInstall`), runs that copy's uninstaller: asking when the wizard is shown, automatically when silent. An `InitializeWizard` guard also keeps `{app}` out of the user profile whatever directory Inno would reuse.
+- **Old updaters still work.** v2.5.0 and earlier (and every pre-rename PDF Sherpa, and the Python app) run the setup unelevated and silent with `/CURRENTUSER` or no scope at all — ignored now — and then relaunch the per-user exe by path, which the migration has just deleted. The setup stub is `asInvoker` and elevates itself (checked in the compiled exe's manifest), so it shows one UAC prompt, and when a silent run migrated without `/WAITPID` a `[Run] … runasoriginaluser` entry starts the new copy unelevated in place of the vanished one.
+- **The new updater starts the installer elevated while the app is still open** (`launch_installer_elevated`: `ShellExecuteExW` with `runas`, since `CreateProcess` cannot elevate), with `installer_arguments()` = `/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /WAITPID=<app pid>`. A declined prompt leaves the app open and unchanged. Only once the installer is running does the app close; the installer waits up to a minute for that pid before touching a file and installs nothing if it never exits. An unelevated handoff batch waits for the installer's pid and relaunches the app — the machine copy when the update came from a per-user one — because anything the elevated installer started would itself be elevated, and Explorer cannot drop files into an elevated window.
+
+Known limits: with over-the-shoulder elevation (a standard user typing an administrator's password) the installer's HKCU is the administrator's, so it does not see the user's per-user copy and leaves it; taskbar pins to the old per-user path break on migration. The `{app}\PDFSherpa.exe` bridge above still applies to an in-place upgrade but never fires on a migration, since the Program Files folder is new.
 
 ## The deprecated Python build is guarded off, not merely unused
 
