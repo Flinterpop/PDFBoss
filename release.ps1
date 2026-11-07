@@ -178,6 +178,16 @@ Write-Host "==> Building portable zip" -ForegroundColor Cyan
 # portable copy without it answers F1 with "Help not found".
 Compress-Archive -Force -Path $exe, "HELP.md" `
                  -DestinationPath "installer\PDFBoss-Portable.zip"
+# Windows PowerShell 5.1's Compress-Archive names entries with BACKSLASHES; the
+# zip format says '/'. PowerShell 7 (pwsh) writes '/'. Refuse rather than ship one.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zr = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "installer\PDFBoss-Portable.zip").Path)
+try { $sepBad = @($zr.Entries | Where-Object { $_.FullName.Contains('\') }).Count }
+finally { $zr.Dispose() }
+if ($sepBad -gt 0) {
+    Remove-Item "installer\PDFBoss-Portable.zip" -Force
+    throw "$sepBad zip entries use '\' as the separator -- run this script under pwsh (PowerShell 7), not powershell.exe"
+}
 
 # Rename bridge.  Every copy from before the rename (v2.3.0 and earlier) polls
 # the latest release for PDFSherpa-Setup.exe / PDFSherpa-Portable.zip, and a
@@ -198,6 +208,13 @@ Copy-Item $exe (Join-Path $bridgeDir "PDFSherpa.exe")
 Copy-Item "HELP.md" $bridgeDir
 Compress-Archive -Force -Path (Join-Path $bridgeDir "PDFSherpa.exe"), (Join-Path $bridgeDir "HELP.md") `
                  -DestinationPath "installer\PDFSherpa-Portable.zip"
+$zr = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "installer\PDFSherpa-Portable.zip").Path)
+try { $sepBad = @($zr.Entries | Where-Object { $_.FullName.Contains('\') }).Count }
+finally { $zr.Dispose() }
+if ($sepBad -gt 0) {
+    Remove-Item "installer\PDFSherpa-Portable.zip" -Force
+    throw "$sepBad zip entries use '\' as the separator -- run this script under pwsh (PowerShell 7), not powershell.exe"
+}
 
 # All four asset names are load-bearing: the in-app updaters match them exactly.
 $assets = @("installer\PDFBoss-Setup.exe", "installer\PDFBoss-Portable.zip",
