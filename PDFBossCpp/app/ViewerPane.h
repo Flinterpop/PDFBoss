@@ -61,6 +61,11 @@ public:
     void focus_search();
     void next_match() { step_match(1); }
     void prev_match() { step_match(-1); }
+    // Search for `needle` as if typed into the search box, but show the first
+    // match on or after `page_index` rather than the first in the document;
+    // with no match from there on, the view stays on `page_index`.  For a host
+    // that already knows which page a hit is on (DocBoss's search index).
+    void show_search(const std::string& needle, int page_index);
 
     // -- highlights --
     void highlight_selection();
@@ -143,6 +148,9 @@ private:
     int current_match_ = -1;
     std::string needle_;
     bool scan_running_ = false;
+    // Set by show_search(): the first match to select is the first on or
+    // after this page.  -1 selects the first match in the document.
+    int wanted_page_ = -1;
 
     // The worker scans on its own thread with its own PdfDocument.  `alive_`
     // is cleared in the destructor and checked on the UI thread before any

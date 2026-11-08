@@ -426,6 +426,7 @@ void ViewerPane::start_search(const std::string& needle)
     matches_.clear();
     current_match_ = -1;
     needle_ = needle;
+    wanted_page_ = -1;   // show_search() sets it again after this returns
 
     if (needle.empty() || !doc_.is_open()) {
         update_match_label();
@@ -475,8 +476,18 @@ void ViewerPane::start_search(const std::string& needle)
                         return;
                     }
                     const bool first = matches_.empty();
+                    const std::size_t start = matches_.size();
                     matches_.insert(matches_.end(), batch.begin(), batch.end());
-                    if (first) {
+                    // Batches arrive in page order, one page each, so the
+                    // first batch at or past the wanted page holds its match.
+                    if (wanted_page_ >= 0) {
+                        if (batch.front().first >= wanted_page_) {
+                            wanted_page_ = -1;
+                            select_match(start);
+                        } else {
+                            update_match_label();
+                        }
+                    } else if (first) {
                         select_match(0);
                     } else {
                         update_match_label();
@@ -489,6 +500,7 @@ void ViewerPane::start_search(const std::string& needle)
                     return;
                 }
                 scan_running_ = false;
+                wanted_page_ = -1;   // no match from that page on: stay put
                 update_match_label();
             });
         } catch (...) {
@@ -537,6 +549,24 @@ void ViewerPane::scroll_rect_into_view(const Rect& rect)
     const int wanted_y = std::max(0, target.GetTop() - client.y / 3);
     const int wanted_x = std::max(0, target.GetLeft() - client.x / 3);
     canvas_->Scroll(wanted_x / kScrollUnit, wanted_y / kScrollUnit);
+}
+
+void ViewerPane::show_search(const std::string& needle, int page_index)
+{
+    if (!doc_.is_open() || search_box_ == nullptr || page_count_ <= 0) {
+        return;
+    }
+    goto_page(page_index);
+    // ChangeValue, not SetValue: SetValue raises wxEVT_TEXT, whose handler
+    // would start a second search that selects the document's first match.
+    search_box_->ChangeValue(wxString::FromUTF8(needle));
+    start_search(needle);
+    // After start_search(), which clears it.  The worker's results reach the
+    // UI thread through CallAfter, so none can have been applied yet.
+    if (!needle.empty()) {
+        wanted_page_ = std::clamp(page_index, 0, page_count_ - 1);
+    }
+    assert(wanted_page_ < page_count_);
 }
 
 void ViewerPane::focus_search()
